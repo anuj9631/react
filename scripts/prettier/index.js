@@ -21,44 +21,32 @@ const mode = process.argv[2] || 'check';
 const shouldWrite = mode === 'write' || mode === 'write-changed';
 const onlyChanged = mode === 'check-changed' || mode === 'write-changed';
 
+// Get list of changed files if onlyChanged mode is enabled
 const changedFiles = onlyChanged ? listChangedFiles() : null;
 
-const prettierIgnoreFilePath = path.join(
-  __dirname,
-  '..',
-  '..',
-  '.prettierignore'
-);
-const prettierIgnore = fs.readFileSync(prettierIgnoreFilePath, {
-  encoding: 'utf8',
-});
-const ignoredPathsListedInPrettierIgnore = prettierIgnore
-  .toString()
-  .replace(/\r\n/g, '\n')
+// Read and parse .prettierignore file
+const prettierIgnoreFilePath = path.join(__dirname, '..', '..', '.prettierignore');
+const prettierIgnoreContent = fs.readFileSync(prettierIgnoreFilePath, 'utf8');
+const ignoredPaths = prettierIgnoreContent
   .split('\n')
   .filter(line => !!line && !line.startsWith('#'));
 
-const ignoredPathsListedInPrettierIgnoreInGlobFormat =
-  ignoredPathsListedInPrettierIgnore.map(ignoredPath => {
-    const existsAndDirectory =
-      fs.existsSync(ignoredPath) && fs.lstatSync(ignoredPath).isDirectory();
+// Convert ignored paths to glob format
+const ignoredPathsGlobFormat = ignoredPaths.map(ignoredPath => {
+  if (fs.existsSync(ignoredPath) && fs.lstatSync(ignoredPath).isDirectory()) {
+    return path.join(ignoredPath, '/**');
+  }
+  return ignoredPath;
+});
 
-    if (existsAndDirectory) {
-      return path.join(ignoredPath, '/**');
-    }
-
-    return ignoredPath;
-  });
-
-const files = glob
-  .sync('**/*.js', {
-    ignore: [
-      '**/node_modules/**',
-      '**/cjs/**',
-      ...ignoredPathsListedInPrettierIgnoreInGlobFormat,
-    ],
-  })
-  .filter(f => !onlyChanged || changedFiles.has(f));
+// Get list of files to be processed
+const files = glob.sync('**/*.js', {
+  ignore: [
+    '**/node_modules/**',
+    '**/cjs/**',
+    ...ignoredPathsGlobFormat,
+  ],
+}).filter(f => !onlyChanged || changedFiles.has(f));
 
 if (!files.length) {
   process.exit(0);
@@ -73,8 +61,10 @@ async function main() {
       const options = await prettier.resolveConfig(file, {
         config: prettierConfigPath,
       });
+
       try {
         const input = fs.readFileSync(file, 'utf8');
+
         if (shouldWrite) {
           const output = await prettier.format(input, options);
           if (output !== input) {
@@ -86,15 +76,11 @@ async function main() {
             if (!didWarn) {
               console.log(
                 '\n' +
-                  chalk.red(
-                    `  This project uses prettier to format all JavaScript code.\n`
-                  ) +
-                  chalk.dim(`    Please run `) +
-                  chalk.reset('yarn prettier-all') +
-                  chalk.dim(
-                    ` and add changes to files listed below to your commit:`
-                  ) +
-                  `\n\n`
+                chalk.red('  This project uses prettier to format all JavaScript code.\n') +
+                chalk.dim('    Please run ') +
+                chalk.reset('yarn prettier-all') +
+                chalk.dim(' and add changes to files listed below to your commit:') +
+                '\n\n'
               );
               didWarn = true;
             }
@@ -103,11 +89,12 @@ async function main() {
         }
       } catch (error) {
         didError = true;
-        console.log('\n\n' + error.message);
+        console.error('\n\n' + error.message);
         console.log(file);
       }
     })
   );
+
   if (didWarn || didError) {
     process.exit(1);
   }
